@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import argparse
 from urllib.parse import urlparse
 import socket
@@ -14,24 +15,71 @@ args = ap.parse_args()
 
 operation = args.operation
 params = args.params
+verbose = args.verbose
 up = urlparse(params[0]) # parse the URL (first parameter)
 
 hostname = up.hostname
 
-port = 21 
+port = 21
 if up.port is not None:
-    port = up.port 
+    port = up.port
 
 username = 'anonymous'
 if up.username is not None:
-    username = up.username 
+    username = up.username
 
 password = ''
 if up.password is not None:
-    password = up.password 
+    password = up.password
 
-print('Operation: %s' % operation)
-print('Hostname: %s' % hostname)
-print('Port: %d' % port)
-print('Username: %s' % username)
-print('Password %s' % password)
+if verbose:
+    print('Operation: %s' % operation)
+    print('Hostname: %s' % hostname)
+    print('Port: %d' % port)
+    print('Username: %s' % username)
+    print('Password: %s\n' % password)
+
+# send: socket string -> nothing
+# sends the given message over the given socket
+def send(socket, message):
+    socket.send(message.encode('ascii'))
+
+# read: socket -> message
+# reads a complete ftp reponse from the givn socket
+def read(socket):
+    message = ''
+    while not message.endswith('\r\n'):
+        chunk = socket.recv(64)
+        message = message + chunk.decode('ascii')
+    return message
+
+# exchange: socket string -> nothing
+# uses the given socket to send an ftp message and receive its reponse
+# if the reponse contains an error code, prints the error message and exits
+# if the verbose mode is on, prints the message and its reponse
+def exchange(socket, message):
+    send(socket, message)
+    response = read(socket)
+    tokens = response.split()
+    code = int(tokens[0])
+    if code >= 400:
+        sys.exit(response)
+    if verbose:
+        print('Send: %s' % message)
+        print('Receive: %s' % response)
+
+socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+socket.connect((hostname, port))
+exchange(socket, 'AUTH TLS\r\n')
+
+context = ssl.create_default_context()
+tlsSocket = context.wrap_socket(socket, server_hostname=hostname)
+exchange(tlsSocket, 'USER %s\r\n' % username)
+if username != 'anonymous':
+    exchange(tlsSocket, 'PASS %s\r\n' % password)
+exchange(tlsSocket, 'PBSZ 0\r\n')
+exchange(tlsSocket, 'PROT P\r\n')
+exchange(tlsSocket, 'TYPE I\r\n')
+exchange(tlsSocket, 'MODE S\r\n')
+exchange(tlsSocket, 'STRU F\r\n')
+exchange(tlsSocket, 'QUIT\r\n')
