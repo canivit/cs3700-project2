@@ -1,1 +1,37 @@
 #!/usr/bin/env python3
+
+import argparse
+from urllib.parse import urlparse
+import socket
+import ssl
+
+desc = 'FTPS client for listing, copying, moving, and deleting files and directories on remote FTPS servers.' 
+ap = argparse.ArgumentParser(description = desc, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('operation', choices=['ls', 'rm', 'rmdir', 'mkdir', 'cp', 'mv'], help = 'The operation to execute.')
+ap.add_argument('params', nargs = '+', help = 'Parameters for the given operation. Will be one or two paths and/or URLs.')
+ap.add_argument('-v', '--verbose', action='store_true', default=False, help='Print all messages to and from the FTP server')
+args = ap.parse_args()
+
+operation = args.operation
+params = args.params
+up = urlparse(params[0]) # parse the URL (first parameter)
+
+hostname = up.hostname
+
+port = 21 
+if up.port is not None:
+    port = up.port 
+
+username = 'anonymous'
+if up.username is not None:
+    username = up.username 
+
+password = ''
+if up.password is not None:
+    password = up.password 
+
+print('Operation: %s' % operation)
+print('Hostname: %s' % hostname)
+print('Port: %d' % port)
+print('Username: %s' % username)
+print('Password %s' % password)
