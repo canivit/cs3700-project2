@@ -16,21 +16,39 @@ args = ap.parse_args()
 operation = args.operation
 params = args.params
 verbose = args.verbose
-up = urlparse(params[0]) # parse the URL (first parameter)
 
-hostname = up.hostname
+remote_url = None
+local_url = None
+if operation == 'cp':
+    if len(params) < 2:
+        sys.exit('Need two parameters for copying files.')
+    else:
+        url1 = urlparse(params[0])
+        url2 = urlparse(params[1])
+        if url1.scheme:
+            remote_url = url1
+            local_url = url2
+            operation = 'cp_to_local'
+        else:
+            remote_url = url2
+            local_url = url1
+            operation = 'cp_to_remote'
+else:
+    remote_url = urlparse(params[0])
+
+hostname = remote_url.hostname
 
 port = 21
-if up.port is not None:
-    port = up.port
+if remote_url.port is not None:
+    port = remote_url.port
 
 username = 'anonymous'
-if up.username is not None:
-    username = up.username
+if remote_url.username is not None:
+    username = remote_url.username
 
 password = ''
-if up.password is not None:
-    password = up.password
+if remote_url.password is not None:
+    password = remote_url.password
 
 if verbose:
     print('Operation: %s' % operation)
@@ -39,54 +57,89 @@ if verbose:
     print('Username: %s' % username)
     print('Password: %s\n' % password)
 
-# send: socket string -> nothing
-# sends the given message over the given socket
-def send(socket, message):
+def sendMessage(socket, message):
     socket.send(message.encode('ascii'))
+    if verbose:
+        print('Send: %s' % message)
 
-# read: socket -> message
-# reads a complete ftp reponse from the givn socket
-def read(socket):
-    message = ''
-    while not message.endswith('\r\n'):
-        chunk = socket.recv(64)
-        message = message + chunk.decode('ascii')
-    return message
+def receiveMessage(socket):
+    response = ''
+    while not response.endswith('\r\n'):
+        chunk = socket.recv(4096)
+        response = response + chunk.decode('ascii')
+    if verbose:
+        print('Receive: %s' % response)
+    return response
 
-# exchange: socket string -> nothing
-# uses the given socket to send an ftp message and receive its reponse
-# if the reponse contains an error code, prints the error message and exits
-# if the verbose mode is on, prints the message and its reponse
 def exchange(socket, message):
-    send(socket, message)
-    response = read(socket)
+    sendMessage(socket, message)
+    response = receiveMessage(socket)
     tokens = response.split()
     code = int(tokens[0])
     if code >= 400:
         sys.exit(response)
-    if verbose:
-        print('Send: %s' % message)
-        print('Receive: %s' % response)
+    return response
 
-socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-socket.connect((hostname, port))
+def extract_ip_port(response):
+    tokens = response.split()
+    ip_token = tokens[-1]
+    ip_token = ip_token[:-2]
+    ip_token = ip_token[1:]
+    numbers = ip_token.split(',')
+    ip = numbers[0] + '.'
+    ip = ip + numbers[1] + '.'
+    ip = ip + numbers[2] + '.'
+    ip = ip + numbers[3]
+    port = int(numbers[4]) * 256
+    port = port + int(numbers[5])
+    return ip, port
 
-client = None
-if username != 'anonymous':
-    exchange(socket, 'AUTH TLS\r\n')
+def setup_data_sokcet(controlSocket, command):
+    response = exchange(controlSocket, 'PASV\r\n')
+    data_ip, data_port = extract_ip_port(response)
+    sendMessage(controlSocket, command)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((data_ip, data_port))
+    receiveMessage(controlSocket)
     context = ssl.create_default_context()
-    client = context.wrap_socket(socket, server_hostname=hostname)
-    exchange(client, 'USER %s\r\n' % username)
+    data_socket = context.wrap_socket(s, server_hostname=hostname)
+    return data_socket
+    
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect((hostname, port))
+receiveMessage(s)
+
+controlSocket = None # socket for the socket channel
+if username != 'anonymous':
+    exchange(s, 'AUTH TLS\r\n')
+    context = ssl.create_default_context()
+    controlSocket = context.wrap_socket(s, server_hostname=hostname) # wrap the control socket in TLS
+    exchange(controlSocket, 'USER %s\r\n' % username)
     if password != '':
-        exchange(client, 'PASS %s\r\n' % password)
-    exchange(client, 'PBSZ 0\r\n')
-    exchange(client, 'PROT P\r\n')
+        exchange(controlSocket, 'PASS %s\r\n' % password)
+    exchange(controlSocket, 'PBSZ 0\r\n')
+    exchange(controlSocket, 'PROT P\r\n')
 else:
-    client = socket
-    exchange(client, 'USER %s\r\n' % username)
+    controlSocket = s
+    exchange(controlSocket, 'USER %s\r\n' % username)
     if password != '':
-        exchange(client, 'PASS %s\r\n' % password)
-exchange(client, 'TYPE I\r\n')
-exchange(client, 'MODE S\r\n')
-exchange(client, 'STRU F\r\n')
-exchange(client, 'QUIT\r\n')
+        exchange(controlSocket, 'PASS %s\r\n' % password)
+exchange(controlSocket, 'TYPE I\r\n')
+exchange(controlSocket, 'MODE S\r\n')
+exchange(controlSocket, 'STRU F\r\n')
+
+if operation == 'ls':
+    data_socket = setup_data_sokcet(controlSocket, 'LIST %s\r\n' % remote_url.path)
+    end = False
+    data = ''
+    while not end:
+        chunk = data_socket.recv(4096)
+        if len(chunk) == 0:
+            end = True
+        else:
+            data = data + chunk.decode('ascii')
+    data_socket.close()
+    print(data)
+    receiveMessage(controlSocket)
+
+exchange(controlSocket, 'QUIT\r\n')
