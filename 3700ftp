@@ -70,16 +70,23 @@ def exchange(socket, message):
 
 socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 socket.connect((hostname, port))
-exchange(socket, 'AUTH TLS\r\n')
 
-context = ssl.create_default_context()
-tlsSocket = context.wrap_socket(socket, server_hostname=hostname)
-exchange(tlsSocket, 'USER %s\r\n' % username)
+client = None
 if username != 'anonymous':
-    exchange(tlsSocket, 'PASS %s\r\n' % password)
-exchange(tlsSocket, 'PBSZ 0\r\n')
-exchange(tlsSocket, 'PROT P\r\n')
-exchange(tlsSocket, 'TYPE I\r\n')
-exchange(tlsSocket, 'MODE S\r\n')
-exchange(tlsSocket, 'STRU F\r\n')
-exchange(tlsSocket, 'QUIT\r\n')
+    exchange(socket, 'AUTH TLS\r\n')
+    context = ssl.create_default_context()
+    client = context.wrap_socket(socket, server_hostname=hostname)
+    exchange(client, 'USER %s\r\n' % username)
+    if password != '':
+        exchange(client, 'PASS %s\r\n' % password)
+    exchange(client, 'PBSZ 0\r\n')
+    exchange(client, 'PROT P\r\n')
+else:
+    client = socket
+    exchange(client, 'USER %s\r\n' % username)
+    if password != '':
+        exchange(client, 'PASS %s\r\n' % password)
+exchange(client, 'TYPE I\r\n')
+exchange(client, 'MODE S\r\n')
+exchange(client, 'STRU F\r\n')
+exchange(client, 'QUIT\r\n')
