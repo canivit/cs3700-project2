@@ -19,22 +19,30 @@ verbose = args.verbose
 
 remote_url = None
 local_url = None
-if operation == 'cp':
+if operation == 'cp' or operation == 'mv':
     if len(params) < 2:
-        sys.exit('Need two parameters for copying files.')
+        sys.exit('Need two parameters for copying or moving files.')
     else:
         url1 = urlparse(params[0])
         url2 = urlparse(params[1])
         if url1.scheme:
             remote_url = url1
             local_url = url2
-            operation = 'cp_to_local'
+            if operation == 'cp':
+                operation = 'cp_to_local'
+            else:
+                operation = 'mv_to_local'
         else:
             remote_url = url2
             local_url = url1
-            operation = 'cp_to_remote'
+            if operation == 'cp':
+                operation = 'cp_to_remote'
+            else:
+                operation = 'mv_to_remote'
 else:
     remote_url = urlparse(params[0])
+    if not remote_url.scheme:
+        sys.exit('Need a valid remote URL after the operation.')
 
 hostname = remote_url.hostname
 
@@ -68,17 +76,16 @@ def receiveMessage(socket):
         chunk = socket.recv(4096)
         response = response + chunk.decode('ascii')
     if verbose:
-        print('Receive: %s' % response)
+        print('Received: %s' % response)
+    tokens = response.split()
+    code = int(tokens[0])
+    if code >= 400:
+        sys.exit('Received Error: %s' % response)
     return response
 
 def exchange(socket, message):
     sendMessage(socket, message)
-    response = receiveMessage(socket)
-    tokens = response.split()
-    code = int(tokens[0])
-    if code >= 400:
-        sys.exit(response)
-    return response
+    return receiveMessage(socket)    
 
 def extract_ip_port(response):
     tokens = response.split()
@@ -94,8 +101,11 @@ def extract_ip_port(response):
     port = port + int(numbers[5])
     return ip, port
 
-def setup_data_sokcet(controlSocket, command):
+def setup_data_sokcet(controlSocket, command):    
     response = exchange(controlSocket, 'PASV\r\n')
+    exchange(controlSocket, 'TYPE I\r\n')
+    exchange(controlSocket, 'MODE S\r\n')
+    exchange(controlSocket, 'STRU F\r\n')
     data_ip, data_port = extract_ip_port(response)
     sendMessage(controlSocket, command)
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -124,9 +134,6 @@ else:
     exchange(controlSocket, 'USER %s\r\n' % username)
     if password != '':
         exchange(controlSocket, 'PASS %s\r\n' % password)
-exchange(controlSocket, 'TYPE I\r\n')
-exchange(controlSocket, 'MODE S\r\n')
-exchange(controlSocket, 'STRU F\r\n')
 
 if operation == 'ls':
     data_socket = setup_data_sokcet(controlSocket, 'LIST %s\r\n' % remote_url.path)
@@ -140,6 +147,40 @@ if operation == 'ls':
             data = data + chunk.decode('ascii')
     data_socket.close()
     print(data)
+    receiveMessage(controlSocket)
+elif operation == 'rm':
+    exchange(controlSocket, 'DELE %s \r\n' % remote_url.path)
+elif operation == 'mkdir':
+    exchange(controlSocket, 'MKD %s \r\n' % remote_url.path)
+elif operation == 'rmdir':
+    exchange(controlSocket, 'RMD %s \r\n' % remote_url.path)
+elif operation == 'cp_to_local':
+    data_socket = setup_data_sokcet(controlSocket, 'RETR %s\r\n' % remote_url.path)
+    end = False
+    file = open(local_url.path, 'wb')
+    while not end:
+        chunk = data_socket.recv(4096)
+        if len(chunk) == 0:
+            end = True
+        else:
+            file.write(chunk)
+    data_socket.close()
+    file.close()
+    receiveMessage(controlSocket)
+elif operation == 'cp_to_remote':
+    data_socket = setup_data_sokcet(controlSocket, 'STOR %s\r\n' % remote_url.path)
+    print(local_url.path)
+    file = open(local_url.path, 'rb')
+    size = 32
+    chunk = file.read(size)
+    while len(chunk) >= size:
+        data_socket.write(chunk)
+        chunk = file.read(size)
+    if len(chunk) > 0:
+        data_socket.write(chunk)
+    file.close()
+    data_socket.shutdown(socket.SHUT_WR)
+    data_socket.close()    
     receiveMessage(controlSocket)
 
 exchange(controlSocket, 'QUIT\r\n')
