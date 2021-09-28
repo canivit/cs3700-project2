@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
-import sys
 import argparse
 from urllib.parse import urlparse
 import socket
 import ssl
+import sys
+import os
 
 desc = 'FTPS client for listing, copying, moving, and deleting files and directories on remote FTPS servers.' 
 ap = argparse.ArgumentParser(description = desc, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -79,7 +80,10 @@ def receiveMessage(socket):
         print('Received: %s' % response)
     tokens = response.split()
     code = int(tokens[0])
-    if code >= 400:
+    if code == 426:
+        print('Possible Error: %s' % response[: -2])
+        print('Ignoring...')
+    elif code >= 400:
         sys.exit('Received Error: %s' % response)
     return response
 
@@ -114,6 +118,34 @@ def setup_data_sokcet(controlSocket, command):
     context = ssl.create_default_context()
     data_socket = context.wrap_socket(s, server_hostname=hostname)
     return data_socket
+
+def cp_to_local():
+    data_socket = setup_data_sokcet(controlSocket, 'RETR %s\r\n' % remote_url.path)
+    end = False
+    file = open(local_url.path, 'wb')
+    while not end:
+        chunk = data_socket.recv(4096)
+        if len(chunk) == 0:
+            end = True
+        else:
+            file.write(chunk)
+    data_socket.close()
+    file.close()
+    receiveMessage(controlSocket)
+
+def cp_to_remote():
+    data_socket = setup_data_sokcet(controlSocket, 'STOR %s\r\n' % remote_url.path)
+    file = open(local_url.path, 'rb')
+    size = 256
+    chunk = file.read(size)
+    while len(chunk) >= size:
+        data_socket.write(chunk)
+        chunk = file.read(size)
+    if len(chunk) > 0:
+        data_socket.write(chunk)
+    file.close()
+    data_socket.close()    
+    receiveMessage(controlSocket)
     
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect((hostname, port))
@@ -149,38 +181,21 @@ if operation == 'ls':
     print(data)
     receiveMessage(controlSocket)
 elif operation == 'rm':
-    exchange(controlSocket, 'DELE %s \r\n' % remote_url.path)
+    exchange(controlSocket, 'DELE %s\r\n' % remote_url.path)
 elif operation == 'mkdir':
-    exchange(controlSocket, 'MKD %s \r\n' % remote_url.path)
+    exchange(controlSocket, 'MKD %s\r\n' % remote_url.path)
 elif operation == 'rmdir':
-    exchange(controlSocket, 'RMD %s \r\n' % remote_url.path)
+    exchange(controlSocket, 'RMD %s\r\n' % remote_url.path)
 elif operation == 'cp_to_local':
-    data_socket = setup_data_sokcet(controlSocket, 'RETR %s\r\n' % remote_url.path)
-    end = False
-    file = open(local_url.path, 'wb')
-    while not end:
-        chunk = data_socket.recv(4096)
-        if len(chunk) == 0:
-            end = True
-        else:
-            file.write(chunk)
-    data_socket.close()
-    file.close()
-    receiveMessage(controlSocket)
+    cp_to_local()
 elif operation == 'cp_to_remote':
-    data_socket = setup_data_sokcet(controlSocket, 'STOR %s\r\n' % remote_url.path)
-    print(local_url.path)
-    file = open(local_url.path, 'rb')
-    size = 32
-    chunk = file.read(size)
-    while len(chunk) >= size:
-        data_socket.write(chunk)
-        chunk = file.read(size)
-    if len(chunk) > 0:
-        data_socket.write(chunk)
-    file.close()
-    data_socket.shutdown(socket.SHUT_WR)
-    data_socket.close()    
-    receiveMessage(controlSocket)
+    cp_to_remote()
+elif operation == 'mv_to_local':
+    cp_to_local()
+    exchange(controlSocket, 'DELE %s\r\n' % remote_url.path)
+elif operation == 'mv_to_remote':
+    cp_to_remote()
+    os.remove(local_url.path)
+
 
 exchange(controlSocket, 'QUIT\r\n')
