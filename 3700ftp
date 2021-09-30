@@ -80,10 +80,7 @@ def receiveMessage(socket):
         print('Received: %s' % response)
     tokens = response.split()
     code = int(tokens[0])
-    if code == 426:
-        print('Possible Error: %s' % response[: -2])
-        print('Ignoring...')
-    elif code >= 400:
+    if code >= 400:
         sys.exit('Received Error: %s' % response)
     return response
 
@@ -143,8 +140,8 @@ def cp_to_remote():
         chunk = file.read(size)
     if len(chunk) > 0:
         data_socket.write(chunk)
-    file.close()
-    data_socket.close()    
+    data_socket.unwrap().close()
+    file.close()   
     receiveMessage(controlSocket)
     
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
