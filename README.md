@@ -1,4 +1,4 @@
-# Project 1
+# Project 2
 
 ## My Approach:
 - First, I implemented the command line parser and made sure that I got the correct values for each parameter after parsing. Challenge was to differentiate between two cases of cp and mv commands. (local path followed by remote path or remote path followed by local path)
